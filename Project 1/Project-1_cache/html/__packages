@@ -1,0 +1,8 @@
+base
+knitr
+rmarkdown
+ggplot2
+dplyr
+bookdown
+gridExtra
+latex2exp

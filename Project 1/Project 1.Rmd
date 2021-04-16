@@ -1,0 +1,631 @@
+---
+title: "Project 1"
+author: "Casper Stenersen & Tinius Mellbye"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: no
+    toc_depth: '2'
+  pdf_document:
+    toc: no
+    toc_depth: '2'
+subtitle: TMA4268 Statistical Learning V2020
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+#library(knitr)
+library(rmarkdown)
+library(ggplot2)
+library(dplyr)
+library(bookdown)
+library(gridExtra)
+library(latex2exp)
+
+knitr::opts_chunk$set(echo = TRUE, tidy=TRUE, message=FALSE, warning=FALSE, strip.white=TRUE, prompt=FALSE, cache=TRUE, size="scriptsize", fig.width=6, fig.height=4, fig.align = "center")
+```
+
+
+# Problem A
+
+## 1
+```{r}
+exp_generator = function(n=1, lambda){
+  u = runif(n = n) # u = a vector of n uniformly distributed numbers between 0 and 1
+  return(-1/lambda*log(u))
+}
+lambda = 2
+n = 10000
+exp_vector = data.frame(x = exp_generator(n, lambda))
+
+
+ggplot(exp_vector, aes(x)) + 
+  geom_histogram(aes(y = stat(density), color = "Sampled")) + 
+  stat_function(fun = dexp, args = lambda, aes(color = "Analytical"))
+
+```
+
+
+## 2
+```{r}
+rg = function(n, alpha){
+  u = runif(n = n)
+  boundary = exp(1) / (alpha + exp(1))
+  left_boundary = u < boundary
+  right_boundary = !left_boundary
+  
+  u[left_boundary] = (u[left_boundary] / boundary) ** (1 / alpha)
+  u[right_boundary] = -log((1-u[right_boundary]) / (boundary * alpha))
+  return(u)
+}
+
+dg = function(x, alpha = 1) {
+  c = alpha * exp(1) / (alpha + exp(1))
+  d <- rep(0, length(x))
+  left_indices <- 0 < x & x < 1
+  right_indices <- 1 <= x
+  d[left_indices] <- c * (x[left_indices] ** (alpha - 1))
+  d[right_indices] <- c * exp(-x[right_indices])
+  return(d)
+}
+```
+
+
+# Problem B
+
+## 1
+### a)
+We have the gamma distribution constrained to $\alpha \in (0, 1)$ and $\beta = 1$ i.e:
+\begin{align*}
+f(x) = 
+\begin{cases}
+\frac{1}{\Gamma(\alpha)}x^{\alpha - 1}e^{-x}, \quad 0 < x\\
+0, \hspace{48pt} \text{otherwise}
+\end{cases}
+\end{align*}
+
+Furthermore, we have that $U \sim \mathrm{unif}(0, 1)$. Thus
+
+\begin{align*}
+\text{Acceptance probability} &= P\Big{(}U ≤ \frac{f(x)}{Ag(x)}\Big{)} \\
+&= \int_{\mathbb{R}} P\big{(}U ≤ \frac{f(x)}{Ag(x)} \big{|} x\big{)} g(x) dx \\
+&= \int_{\mathbb{R}}\frac{f(x)}{Ag(x)}g(x)dx \\
+&= \frac{1}{A}\int_{0}^{\infty}f(x)dx = \frac{1}{A}
+\end{align*}
+
+Need to find $A$; $Ag(x) ≥ f(x) \, \forall x \Leftrightarrow A ≥ \frac{f(x)}{g(x)}$. ($A ≥ 1$, but $A = 1 \Rightarrow f(x) = g(x)$ and the procedure is unnecessary) We want A as small as possible. Thus, 
+
+$$
+A = \sup_{x>0}\frac{f(x)}{g(x)}
+$$
+First we investigate the case when $0 < x < 1$
+
+$$
+\frac{f(x)}{g(x)}= \frac{\frac{1}{\Gamma(\alpha)}x^{\alpha - 1}e^{-x}} {cx^{\alpha-1}} 
+= \frac{e^{-x}}{\Gamma(\alpha)c} 
+= \frac{e^{-x}(\alpha^{-1} + e^{-1})}{\Gamma(\alpha)}
+$$
+Supremum provided when $x \rightarrow 0:$
+
+$$
+\Longrightarrow A = \frac{\alpha^{-1} + e^{-1}}{\Gamma(\alpha)}
+$$
+Now, the case when $x ≥ 1$:
+$$
+\frac{f(x)}{g(x)} = \frac{\frac{1}{\Gamma(\alpha)}x^{\alpha - 1}e^{-x}} {ce^{-x}} 
+= \frac{x^{\alpha-1}}{\Gamma(\alpha)c}
+$$
+
+which is maximized for $x = 1$
+
+$$
+\Longrightarrow A = \frac{\alpha^{-1} + e^{-1}}{\Gamma(\alpha)}
+$$
+same as for $0 < x < 1$. Hence, the 
+$$
+\text{Acceptance probability} = \frac{\Gamma(\alpha)}{\alpha^{-1} + e^{-1}}
+$$
+
+
+### b)
+
+Now we us the acceptance probability above and rejection sampling to sample from the gamma distribution. 
+```{r}
+gamma_samples = function(n = 1, alpha = 0.5, beta = 1){
+  # the acceptance probability 
+  a = (1/alpha + 1/exp(1))/gamma(alpha)
+  # initialise vector of samples
+  samples = c()
+  # number of succesful samples
+  num_of_samp = 0
+  repeat{
+    # Generating n uniform samples on (0, 1)
+    u = runif(n)
+    # genereate samples from g as in A)
+    x = rg(n = n, alpha =  alpha)
+    # probability of accepting
+    prob = dgamma(x, alpha, beta)/(a*dg(x, alpha))
+    # appending the x-s where u < prob
+    samples = c(samples, x[u < prob])
+    # increas num_of_samp by the number of samples accepted
+    num_of_samp = num_of_samp + length(x[u < prob])
+    # Here we remove every accepted samples in addition to the n we want
+    if(length(samples) > n){
+      samples = samples[1:n]
+      break
+    }
+  }
+  return(samples)
+}
+# We genereate many samples each iteration to save number of iterations in the loop. We do this because vector operations are faster than loops, in R.
+
+```
+
+#### We compare our implementation wth the theoretical distribution
+```{r}
+alpha = 0.5
+# We draw samples
+smpls = gamma_samples(n = 100000, alpha = alpha)  
+
+# sample mean and variance to use for comparison
+mn = mean(smpls)
+vr = var(smpls)
+
+# to be able to use ggplot we transform the samples to a data frame
+smpls = data.frame(samples = smpls) 
+# making a nice plot for comparison
+ggplot(data = smpls, aes(x = samples)) + 
+  geom_histogram(data = smpls, 
+                 aes(x=samples, y=..density.., color = "Sampled")) + 
+  stat_function(fun = dgamma, 
+                geom = "line", 
+                size = 1, 
+                args = list(shape=alpha, rate=1), 
+                aes(x=samples, color = "Analytical")) +
+  ylim(0, 2) + 
+  xlim(0, 4) + 
+  ggtitle("Samples and analytical comparison") + 
+  labs(x='x', y='density', 
+       caption = 'Figure 6: Here we compare the analytical density of the gamma distribution \n with the sampled density.') + 
+  theme(plot.caption = element_text(hjust = 0.5))
+```
+We see that our samples match the teoretical distribution very well.
+
+Furthermore, we compare mean and variance
+```{r}
+beta = 1
+mean_var_matrix = matrix(c(mn, vr, alpha*beta, alpha*beta^2), ncol = 2, byrow = TRUE)
+colnames(mean_var_matrix) = c("Mean", "Variance")
+rownames(mean_var_matrix) = c("Sample", "Theoretical")
+mean_var_matrix
+```
+We can see that the sample mean and variance are fairly similar to that of the theoretical. 
+
+## 2
+
+Now we investigate the case when $\alpha > 1$ and $\beta = 1$ through ratio of uniform methods. We have
+
+$$C_f = \bigg \{(x_1, x_2): 0 \leq x_1 \leq \sqrt{f^*\big{(}\frac{x_2}{x_1}\big{)}} \bigg \}, \quad f^*(x) = \begin{cases}
+x^{\alpha-1}e^{-x}, \quad 0 < x, \\
+0, \quad \text{otherwise}.
+\end{cases}$$
+
+Then $y = \frac{x_2}{x_1}$ will be Gamma($\alpha, 1$) distributed.
+
+We start by finding expressions for $a, b_+$ and $b_-$.
+
+### a)
+
+$$
+a = \sqrt{\sup_{x} f^{\star}(x)} 
+$$
+For $x≤0, \; f^{\star}(x) = 0$ thus we examine the case when $x>0$:
+$$
+\sup_{x>0}f^{\star}(x) = \sup_{x>0}x^{\alpha-1}e^{-x}
+$$
+Hence,
+\begin{align*}
+\frac{d}{dx}f^{\star}(x) &= (\alpha - 1)x^{\alpha-2}e^{-x} - x^{\alpha-1}e^{-x} \\
+&= x^{\alpha-2}e^{-x}((\alpha - 1) - x) = 0 \\
+\Longrightarrow x &= \alpha - 1
+\end{align*}
+
+moreover
+
+\begin{align*}
+\begin{Bmatrix}
+f^{\star}(x) \overset{x \rightarrow 0}{\longrightarrow} 0 \\
+f^{\star}(x) \overset{x \rightarrow \infty}{\longrightarrow} 0 \\
+f^{\star}(\alpha-1) ≥ 0
+\end{Bmatrix} 
+\overset{f^{\star}(x) \, \text{cont.}}{\Longrightarrow} x = \alpha-1 \; \text{provides a maximum.}
+\end{align*}
+
+As a result, 
+$$
+a = (\alpha -1)^{(\alpha -1)/2}e^{-(\alpha)+1)/2}
+$$
+
+Now we find
+$$
+b_+ = \sqrt{\sup_{x≥0}(x^2f^{\star}(x))} 
+$$
+and 
+$$
+\sup_{x≥0}(x^2f^{\star}(x)) = \sup_{x≥0}x^{\alpha+1}e^{-x} > 0 \; \forall x≥0
+$$
+We will now find the derivative and set it to 0.
+\begin{align*}
+\frac{d}{dx} x^{(\alpha + 1)}e^{-x}
+&= (\alpha+1)x^{\alpha}e^{-x} - x^{\alpha+1}e^{-x} \\
+&= x^{\alpha}e^{-x}((\alpha + 1) - x) = 0 \\
+\Longrightarrow x &= \alpha + 1
+\end{align*}
+
+Additionally
+
+\begin{align*}
+\begin{Bmatrix}
+x^2f^{\star}(x) \overset{x \rightarrow 0}{\longrightarrow} 0 \\
+x^2f^{\star}(x) \overset{x \rightarrow \infty}{\longrightarrow} 0
+\end{Bmatrix} 
+\overset{x^2f^{\star}(x) \, \text{cont.}}{\Longrightarrow} b_+ = (\alpha+1)^{(\alpha+1)/2}e^{-(\alpha+1)/2}
+\end{align*}
+
+
+Furthermore, because
+$$
+f^{\star}(x) \overset{x≤0}{=} 0
+$$
+we get that
+$$
+\quad b_- = -\sqrt{\sup_{x≤0}(x^2f^{\star}(x))} = 0
+$$
+
+### b)
+
+Our implementation of the ratio of uniform method for the Gamma distribution. Implemented on a log-scale to not get NAs, and we get:
+
+\begin{align*}
+\log(a) &= \frac{\alpha-1}{2}(\log(\alpha - 1) - 1) \\
+\log(b_+) &= \frac{\alpha + 1}{2}(\log(\alpha + 1) - 1)
+\end{align*}
+
+
+
+Note that in the code below, we check if $(x_1, x_2) \in C_f$, $\Rightarrow 0 ≤ x_1 ≤ \sqrt{f^{\star}(x_2/x_1)}$,
+on a log-scale. Hence, 
+
+\begin{align*}
+\log(x_1) &≤ \log \sqrt{f^{\star}(\frac{x_2}{x_1})} = \frac{1}{2}\log(\frac{x_2}{x_1})^{\alpha - 1} + \frac{1}{2}\log e^{-x_2/x_1} \\
+&= \frac{1}{2}\log(\frac{x_2}{x_1})^{\alpha - 1} - \frac{1}{2}\frac{x_2}{x_1} \\
+&= \frac{\alpha - 1}{2}\log(\frac{x_2}{x_1}) - \frac{1}{2}\exp (\log (x_2/x_1)) \\
+&= \frac{\alpha - 1}{2}(\log(x_2) - \log(x_1)) - \frac{1}{2}\exp (\log(x_2) - \log(x_1)) \\
+\Longrightarrow \log x_1(\alpha + 1) &≤ (\alpha - 1)\log x_2 - \exp(\log x_2 - \log x_1)
+\end{align*}
+
+Furthermore,
+
+$$\log x_1 = \log a + \log u_1, \quad u_1 \sim U(0, 1)$$
+
+$$\log x_2 = \log b_+ + \log u_2, \quad u_2 \sim U(0, 1)$$
+
+```{r}
+rum_gamma = function(n = 1, alpha = 2, beta = 1){
+  # Calculating the limits of the sample region using the log-transformation of a and b+ (we do not need b_)
+  log_a  = 1/2*(alpha-1)*(log(alpha-1) - 1)
+  # log of b_{+}
+  log_b2 = 1/2*(alpha+1)*(log(alpha+1) - 1)
+  
+  # creat an empty vector to store samples
+  samples = c()
+  tries = 0
+  while(length(samples) < n){
+    tries = tries + 1
+    # Sampling from the uniform distribution on (0, 1) and 
+    # transforming the samples to appropriate regions
+    log_x1 = log_a + log(runif(1))
+    log_x2 = log_b2 + log(runif(1))
+    if((alpha+1)*log_x1 <= (alpha-1)*log_x2 - exp(log_x2 - log_x1)){
+      y = exp(log_x2 - log_x1)
+      samples = c(samples, y)
+    }
+  }
+  return(list(tries = tries, samples = samples))
+}
+```
+
+#### Compare our implementation with the teoretical distribution
+
+We plot one realisation to illustrate that the algorithm works
+```{r, eval=T, echo=T}
+alpha = 50
+n = 20000
+# Sample from the algorithm
+smpls_rum = rum_gamma(n = n, alpha = alpha)
+tries = smpls_rum$tries
+samples_rum = smpls_rum$samples
+# sample mean and variance
+mn_rum = mean(samples_rum)
+vr_rum = var(samples_rum)
+
+# to be able to use ggplot we transform the samples to a data frame
+smpls_rum = data.frame(samples = samples_rum) 
+
+# making a nice plot for comparison
+ggplot(data = smpls_rum, aes(x = samples)) + 
+  geom_histogram(data = smpls_rum, 
+                 aes(x=samples, y=..density.., color = "Sampled")) + 
+  stat_function(fun = dgamma, 
+                geom = "line", 
+                size = 1, 
+                args = list(shape=alpha, rate=1), 
+                aes(x=samples, color = "Analytical")) +
+  ggtitle("Comparing samples with theoretical distribution") + 
+  labs(x = "x", y = "density", 
+       caption = "Figure 7: Here we compare the analytical density of the gamma distribution \n with our sampled density") + 
+  theme(plot.caption = element_text(hjust = 0.5))
+```
+
+Figure 7 shows that our implementation resambles the analytical distribution quite well.
+
+Furthermore, we compare the means and variances
+```{r}
+beta = 1
+mean_var_matrix = matrix(c(mn_rum, vr_rum, alpha*beta, alpha*beta^2), ncol = 2, byrow = TRUE)
+colnames(mean_var_matrix) = c("Mean", "Var")
+rownames(mean_var_matrix) = c("Sample", "Theoretical")
+mean_var_matrix
+```
+We can see that the sample mean and variance are fairly similar to that of the theoretical. 
+
+### Here we plot how many tries are needed for different alphas
+
+```{r, fig.width = 8}
+tries_count = function(alphas){
+  result = c()
+  n = 1000
+  for(i in 1:length(alphas)){
+    # Sample from the algorithm
+    tries = smpls_rum = rum_gamma(n = n, alpha = alphas[i])$tries
+    vect = c(alphas[i], tries)
+    result = cbind(result, vect)
+  }
+  result = data.frame(rates = t(result))
+  colnames(result) = c("Alphas", "Tries")
+  return(result)
+}
+
+small_alphas = c(2, 5, 10, 20, 30, 40, 50)
+df_small_alphas = tries_count(small_alphas)
+large_alphas = c(100, 200, 500, 1000, 1500, 2000)
+df_large_alphas = tries_count(large_alphas)
+
+
+small = ggplot(data = df_small_alphas) + 
+  geom_col(data = df_small_alphas, 
+           aes(x = Alphas, y = Tries)) +
+  labs(x = "Alphas", y = "Tries", 
+       caption = "Figure 8: Here we plot the number of tries for \n alpha = 2, 5, 10, 20, 30, 40 and 50") + 
+  theme(plot.caption = element_text(hjust = 0.5))
+
+large = ggplot(data = df_large_alphas) + 
+  geom_col(data = df_large_alphas, 
+           aes(x = Alphas, y = Tries)) +
+  labs(x = "Alphas", y = "Tries", 
+       caption = "Figure 9: Here we plot the number of tries for \n alpha = 100, 200, 500, 1000, 1500 and 2000") + 
+  theme(plot.caption = element_text(hjust = 0.5))
+
+# To get the plots next to each other
+grid.arrange(small, large, ncol = 2, top = "Tries versus alphas (pay attention to the different y-axes)")
+```
+
+#### Interpretation
+
+We see from figure 8 and 9 that as $\alpha$ increases the number of tries needed to sample $n = 1000$ samples increases i.e. the algorithm becomes less efficient as $\alpha$ increase.
+
+
+## 3
+
+We seek an implementation of the gamma distribution for any $\alpha > 0$ and $\beta > 0$.
+
+We will use that for $X \sim \text{Gamma}(\alpha, 1)$ and $c \in \mathbb{R}_+$ we get from the moment generating function that
+$$
+M_{Xc}(t) = E(e^{Xct}) = M_X(ct) = \bigg{(}\frac{1}{1-ct}\bigg{)}^\alpha \\
+\Longrightarrow Xc \sim \text{Gamma}(\alpha, c)
+$$
+Thus we can make a simple function using `gamma_samples` and `rum_gamma` from above. These two covers the cases when $\alpha < 1$ and $\alpha > 1$. When $\alpha = 1$ we use the fact that when $X \sim \text{Gamma}(1, \beta)$ we have that $X \sim \text{Exp}(\frac{1}{\beta})$ and use the function `exp_generator` from A1.
+
+_We have the inversion of the $\beta$ parameter in the exponential distribution due to how we implemented the function. If we were using a different parametrisation, we would have that_ $X \sim \text{Exp}(\beta)$
+
+```{r}
+gam4 = function(n = 1, alpha = 2, beta = 1){
+  if (alpha > 1){
+    return(beta*rum_gamma(n, alpha)$samples)
+  }
+  else if (0 < alpha && alpha < 1){
+    return(beta*gamma_samples(n, alpha))
+  }
+  else if (alpha == 1){
+    return(exp_generator(n, 1/beta))  
+  }
+}
+```
+
+#### Comparing
+
+Because we above have illustrated that the functions we use work, as well as considering the proof, we do not include plots for the three cases $0 < \alpha < 1$, $\alpha = 1$ and $\alpha > 1$ as it demands a fair amount of space. Though, we do include a comparison of the mean and variance for the three cases.
+
+```{r, eval=F, echo=F}
+# For reproducebility
+set.seed(123)
+n = 10000
+alpha = 1
+beta = 5
+
+gam4_realizations = gam4(n, alpha, beta)
+# mean and variance from gam4 samples
+mn_gam4 = mean(gam4_realizations)
+vr_gam4 = var(gam4_realizations)
+
+gam4_realizations = data.frame(samples = gam4_realizations)
+
+ggplot(data = gam4_realizations, aes(x = samples)) + 
+  geom_histogram(data = gam4_realizations, 
+                 aes(x=samples, y=..density.., color = "Sampled")) + 
+  stat_function(fun = dgamma, 
+                geom = "line", 
+                size = 1, 
+                args = list(shape = alpha, rate=1/beta), 
+                aes(x = samples, color = "Analytical")) +
+  ggtitle("Comparing samples with theoretical distribution") + labs(x = "x", y = "density", 
+    caption = "Figure 10: Here we compare the analytical density of the \n gamma distribution with our sampled density") + 
+    theme(plot.caption = element_text(hjust = 0.5))
+
+```
+
+
+```{r}
+mean_var_comparison = function(alpha, beta, n = 100000){
+  # Draw samples
+  gam4_realizations = gam4(n, alpha, beta)
+  # mean and variance from gam4 samples
+  mn_gam4 = mean(gam4_realizations)
+  vr_gam4 = var(gam4_realizations)
+  # Create a matrix
+  # Theoretical mean = alpha*beta
+  # Theoretical variance = alpha*beta^2
+  mean_var_matrix = matrix(c(mn_gam4, vr_gam4, alpha*beta, alpha*beta^2), ncol = 2, byrow = TRUE)
+  # We set colnames and rownames to make easier to interpret
+  colnames(mean_var_matrix) = c("Mean", "Variance")
+  rownames(mean_var_matrix) = c("Sample", "Theoretical")
+  
+  mean_var_matrix
+}
+```
+
+We set $\beta = 10$ in all the cases, $\alpha$ is tested for the three cases.
+
+$0 < \alpha < 1$:
+```{r}
+mean_var_comparison(0.5, 10)
+```
+$\alpha = 1$:
+```{r}
+mean_var_comparison(1, 10)
+```
+$1 < \alpha$:
+```{r}
+mean_var_comparison(50, 10)
+```
+
+
+
+## 4
+### a)
+When 
+$$
+X \sim \text{Gamma}(\alpha, 1) \\
+Y \sim \text{Gamma}(\beta, 1)
+$$
+are independent, and from above we have learned that 
+$$
+X+Y = V \sim \text{Gamma}(\alpha + \beta, 1).
+$$
+The joint pdf of $X$ and $Y$ is
+$$
+f_{X, Y}(x, y) = \frac{1}{\Gamma(\alpha)\Gamma(\beta)}x^{\alpha-1}y^{\beta-1}e^{-(x+y)}, \quad x,y ≥ 0
+$$
+We further define
+$$
+U = \frac{X}{X + Y} = \frac{X}{V}
+$$
+Then 
+$$
+X = UV ≥0 \quad \text{and} \quad Y = V-X = V-UV = V(1-U) ≥0
+$$
+Hence we have two cases 
+
+1. $V ≥ 0 \Rightarrow 0 ≤ U ≤ 1$
+2. $V < 0 \Rightarrow U ≤ 0$ and $U ≥ 1$ (Which clearly is not possible)
+
+$$
+\Longrightarrow U \in [0, 1]
+$$
+
+Now we find the determinant of the Jacobian of the transformation
+
+$$
+|J| = \Bigg|\frac{\partial(X,Y)}{\partial(U, V)}\Bigg| 
+= \begin{vmatrix}
+V & U \\
+-V & 1-V
+\end{vmatrix} = V - UV + UV = V
+$$
+Hence, we get
+
+\begin{align*}
+f_{U, V}(u, v) &= \frac{1}{\Gamma(\alpha)\Gamma(\beta)}(uv)^{\alpha-1}v(1-u))^{\beta-1}e^{-v} \Bigg|\frac{\partial(x, y)}{\partial(u, v)}\Bigg| \\
+&= \frac{1}{\Gamma(\alpha)\Gamma(\beta)}v^{\alpha-1+\beta-1+1} u^{\alpha-1}(1-u)^{\beta-1}e^{-v} \\
+&= \frac{1}{\Gamma(\alpha)\Gamma(\beta)}v^{\alpha+\beta-1}e^{-v} u^{\alpha-1}(1-u)^{\beta-1} \frac{\Gamma(\alpha + \beta)}{\Gamma(\alpha + \beta)} \\
+&= \underline{\frac{1}{\Gamma(\alpha + \beta)}v^{(\alpha + \beta) - 1}e^{-v}} \;
+\underline{\frac{\Gamma(\alpha + \beta)}{\Gamma(\alpha)\Gamma(\beta)} u^{\alpha-1}(1-u)^{\beta-1}}
+\end{align*}
+
+We define the first part of the expression as $f_V(v)$ which we identify to be tha Gamma density with variables $\alpha + \beta$ and $1$, as stated above. Furthermore, the last part we define as $f_U(u)$ and see that it is the pdf of a Beta distributed variable with parameters $\alpha$ and $\beta$. Since these pdfs are entirely seperated we can conclude that 
+$$
+U \sim \text{Beta}(\alpha, \beta)
+$$
+with $u \in [0, 1]$ from above. 
+$$\qquad \qquad \qquad \qquad \qquad \qquad \qquad \qquad \qquad\qquad \qquad \qquad \qquad \qquad \qquad \qquad \blacksquare$$
+
+
+### b)
+
+By using what we just proved and the function `gam4`, we can simulate from a Beta distribution.
+```{r}
+beta_gen = function(n, alpha, beta){
+  x = gam4(n, alpha)
+  y = gam4(n, beta)
+  return(x/(x+y))
+}
+```
+
+#### Plotting
+```{r}
+n = 20000
+alpha = 5
+beta = 2
+beta_vect = beta_gen(n, alpha, beta)
+# Sample mean and variance
+mn_beta = mean(beta_vect)
+vr_beta = var(beta_vect)
+
+beta_vect = data.frame(samples = beta_vect)
+# Plot
+ggplot(data = beta_vect, aes(x = samples)) + 
+  geom_histogram(data = beta_vect, 
+                 aes(x=samples, y=..density.., color = "Sampled")) + 
+  stat_function(fun = dbeta, 
+                geom = "line", 
+                size = 1, 
+                args = list(shape1=alpha, shape2=beta), 
+                aes(x=samples, color = "Analytical"))  +
+  ggtitle("Comparing samples with theoretical distribution") + labs(x = "x", y = "density", 
+    caption = paste("Figure 10: Here we compare the analytical density of the beta distribution \n with our sampled density. alpha = ", alpha, " and beta = ", beta)) + 
+    theme(plot.caption = element_text(hjust = 0.5))
+```
+
+Figure 10 illustrates that our samples are very close to the analytical pdf.
+
+#### Comparing mean and variance
+```{r}
+mean_var_matrix = matrix(c(mn_beta, vr_beta, alpha/(alpha+beta),
+                           alpha*beta/((alpha+beta)^2*(alpha+beta+1))), 
+                         ncol = 2, byrow = TRUE)
+colnames(mean_var_matrix) = c("Mean", "Var")
+rownames(mean_var_matrix) = c("Sample", "Theoretical")
+mean_var_matrix
+```
+We can see that the sample mean and variance are fairly similar to that of the theoretical. 

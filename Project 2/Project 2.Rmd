@@ -1,0 +1,466 @@
+---
+title: "Project 2"
+author: "Casper Stenersen & Tinius Mellbye"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: no
+    toc_depth: '2'
+  pdf_document:
+    toc: no
+    toc_depth: '2'
+subtitle: TMA4268 Statistical Learning V2020
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+#library(knitr)
+library(rmarkdown)
+library(ggplot2)
+library(dplyr)
+library(bookdown)
+library(gridExtra)
+library(latex2exp)
+library(boot)
+library(invgamma)
+
+knitr::opts_chunk$set(echo = TRUE, tidy=TRUE, message=FALSE, warning=FALSE, strip.white=TRUE, prompt=FALSE, cache=TRUE, size="scriptsize", fig.width=7, fig.height=4, fig.align = "center")
+```
+
+# Problem A
+## 1)
+Here we plot the cumulative number of distaters.
+```{r}
+# Here we we start with the first year with 0 accidents and count one more accident per row in the data.frame
+# The last year in the data do not represent another accident. Hence the two last elements in cumulative number of accidents are equal
+cum_num = c(c(0:189), 189)
+cumulative_plot = ggplot(data = coal, aes(x = date, y = cum_num)) + 
+  geom_path() 
+cumulative_plot
+```
+The plot shows a steep linear trend until around 1988, then the growth of the cumulative decreased. i.e. time between accidents increased, it became safer.
+
+## 2)
+We find the posterior of $\theta$, given $x$ by using bayes rule and independence between variables,
+\begin{align} 
+f(\theta | x)& \; = \frac{f(x|\theta)f(\theta)}{f(x)} \propto f(x|\theta)f(\theta) \\
+&\overset{\textrm{indep.}}{=} f(x|\theta)f(t_1)f(\lambda_0|\beta)f(\lambda_1|\beta)f(\beta) 
+\end{align}
+
+note that $f(t_1)$ is uniformly distributed on the allowed values, meaning that it is constant on the allowed values and can be disregarded when considering proportionality relations. Hence,
+
+\begin{align}
+f(\theta|x) &\propto e^{-\lambda_0(t_1 - t_0) - \lambda_1(t_2 - t_1)} \lambda_0^{y_0} \lambda_1^{y_1} \frac{1}{\beta^2} \lambda_0 e^{-\frac{\lambda_0}{\beta}} \frac{1}{\beta^2} \lambda_1 e^{-\frac{\lambda_1}{\beta}} e^{-\frac{1}{\beta}}\frac{1}{\beta} \\
+&= \underline{\exp\bigg{(}-\lambda_0(t_1 - t_0 + \frac{1}{\beta}) - \lambda_1(t_2 - t_1 + \frac{1}{\beta}) - \frac{1}{\beta}\bigg{)} \frac{\lambda_0^{y_0+1} \lambda_1^{y_1+1}}{\beta^5}} \tag{posterior}
+\end{align}
+which is the posterior of $\theta|x$ up to a normalising constant.
+
+## 3)
+The full conditionals for each element of $\theta$ can be extracted from the expression above. The full conditional for the $i^{\textrm{th}}$ element of $\theta = [\theta_1, \dots, \theta_p]^T$ is 
+$$f(\theta_i | \theta_1, \dots, \theta_{i-1}, \theta_{i+1}, \dots, \theta_p, x).$$
+Thus, we get
+\begin{align}
+f(t_1| \lambda_0, \lambda_1, \beta, x) &\propto \lambda_0^{y_0}\lambda_1^{y_1} e^{-t_1(\lambda_0-\lambda_1)}
+\end{align}
+which is not a named distribution.
+
+Next we see that 
+\begin{align}
+f(\lambda_0 |t_1, \lambda_1, \beta, x) &\propto \exp(-\lambda_0(t_1 - t_0 + \frac{1}{\beta})) \lambda_0^{y_0 + 1} \\
+&= \lambda_0^{y_0+1} \exp\big{(}\frac{-\lambda_0}{(t_1 - t_0 + 1/\beta)^{-1}}\big{)}
+\end{align}
+this is recognised to be proportional to the gamma distribution, i.e.
+$$\lambda_0 |t_1, \lambda_1, \beta, x \sim \textrm{Gamma}(y_0+2, (t_1 - t_0 + \frac{1}{\beta})).$$ 
+Here we used the rate parametrisation.
+Similarly, 
+$$\lambda_1 |t_1, \lambda_0, \beta, x \sim \textrm{Gamma}(y_1 + 2, (t_2 - t_1 + \frac{1}{\beta})).$$
+
+Lastly,
+\begin{align}
+f(\beta |t_1, \lambda_0, \lambda_1, x) &\propto \exp(-\frac{1}{\beta}(\lambda_0 + \lambda_1 + 1)) \frac{1}{\beta^5} \\
+&= \exp\big{(}\frac{-(\lambda_0 + \lambda_1 + 1)}{\beta}\big{)} \frac{1}{\beta^{4+1}}
+\end{align}
+is proportional to the inverse gamma distribution, in other words, $\beta |t_1, \lambda_0, \lambda_1, x \sim \textrm{Inv. Gamma}(4, \lambda_0 + \lambda_1 + 1)$ again with the rate parametrisation.
+
+## 4) 
+
+Now we will use the Metropolis-Hastings algorithm as our single site MCMC to sample the posterior distribution. The variable we are interested in is $t_1$. We will sample the remaining variables from their known full conditionals. 
+We need to contruct a Markov chain with limiting distribution $\pi(t) = f(t| \lambda_0, \lambda_1, \beta, x)$, the chain got to be irreducible and ergodic (aperiodic and positive reccurent).
+We have convergence to the limiting distribution when the detailed balance equation is satified, 
+$$\pi(t_1) P(t_1'|t_1) = \pi(t_1')P(t_1|t_1')$$
+Hence, we want to find $P(t_1'|t_1)$ which satisfies this. To enforce this we impose the restriction to only accept a transition from $t_1$ to $t_1'$ with probability $\alpha(t_1, t_1')$, leading to the updated detailed balance equation 
+$$
+\pi(t_1) q(t_1'|t_1) \alpha(t_1, t_1') = \pi(t_1')q(t_1|t_1')\alpha(t_1', t_1)
+$$
+Here we set $P(i|j) = q(i|j)\alpha(j, i)$, where $q(i|j)$ is the proposal density of going from state $j$ to state $i$. 
+We will use the gaussian proposal $q(t_1'|t_1) \sim \mathcal{N}(t_1, \sigma^2)$ where $\sigma^2$ effectlivly is tuning parameter.
+
+$\alpha(t_1, t_1')$ is selected to be
+$$
+\alpha(t_1, t_1') = \min\bigg{\{}1,\frac{\pi(t_1')q(t_1| t_1')}{\pi(t_1)q(t_1'| t_1)} \bigg{\}}
+$$
+and because we selected $q()$ to be a symmetric distribution $q(t_1|t_1') = q(t_1', t_1)$ making 
+
+$$
+\alpha(t_1, t_1') = \min\bigg{\{}1,\frac{\pi(t_1')}{\pi(t_1)} \bigg{\}} = \min\bigg{\{}1,\frac{\lambda_0^{y_0'}\lambda_1^{y_1'}e^{-t_1'(\lambda_0 - \lambda_1)}}{\lambda_0^{y_0}\lambda_1^{y_1}e^{-t_1(\lambda_0 - \lambda_1)}} \bigg{\}}
+$$
+
+We compute in log-scale to make the algorithm more stable.
+
+
+```{r}
+get_y = function(x, t){
+  # the number of observations from t_k to t_{k+1}, but we only have two intervals, hence
+  y_0 = sum(x <= t)
+  y_1 = length(x) - y_0
+  return(list("y_0" = y_0, "y_1" = y_1))
+}
+
+log_fc_t_1 = function(x, t){
+  return(get_y(x, t)$y_0*log(lambda_0) + get_y(x, t)$y_1*log(lambda_1) + t*(lambda_1-lambda_0))
+}
+
+
+single_site_mcmc = function(t_1, lambda_0, lambda_1, beta, x, sigma, n = 10000){
+  set.seed(135642)
+  
+  # We initialise the data frame where we will store the values
+  data_mcmc =  data.frame(matrix(nrow = n, ncol = 4))
+  colnames(data_mcmc) = c("t_1", "lambda_0", "lambda_1", "beta")
+  data_mcmc[1, ] = c(t_1, lambda_0, lambda_1, beta)
+  
+  # We calculate the log full conditional, by do not neew calculate the the log full conditional twice inside the loop
+  log_fc_new = log_fc_t_1(x, t_1)
+  
+  success_count = 0
+  for (i in 2:n){
+    # Generate proposals
+    t_1_new = rnorm(1, mean = t_1, sd = sigma)
+    
+    # if the proposal is outside the interval [t_0, t_2]
+    if((t_1_new < t_0) | (t_1_new > t_2)){
+      log_accept = -Inf # corresponds to alpha = 0 on non-log scale
+    }
+    else{
+      # We store the log full conditional of the last iteration
+      log_fc = log_fc_new
+      # We get the y values for the new t_1
+      y_new = get_y(x, t_1_new)
+      
+      # We calculate the log of the full conditional for t_1_new
+      log_fc_new = log_fc_t_1(x, t_1_new)
+      # Calculate the acceptance probability on log scale
+      log_accept = log_fc_new - log_fc
+    }
+    
+    # Accept or reject
+    u <- runif(1)
+    # If u < alpha, we accept the proposal
+    if(u < exp(log_accept)){
+      t_1 = t_1_new
+      success_count = success_count + 1
+    }
+    # else{ do nothing }
+    
+    # We add the selected values in the data frame
+    data_mcmc[i, ] = c(t_1, lambda_0, lambda_1, beta)
+    
+    # Full conditional for the parameters
+    beta = rinvgamma(1, shape = 4, rate = (lambda_0 + lambda_1 + 1)) 
+    lambda_0 = rgamma(1, shape = get_y(x, t_1)$y_0 + 2, rate = (t_1 - t_0 + 1/beta))
+    lambda_1 = rgamma(1, shape = get_y(x, t_1)$y_1 + 2, rate = (t_2 - t_1 + 1/beta))
+    
+  }
+  return(list("chain" = data_mcmc, "success_rate" = success_count/n))
+}
+```
+
+
+## 5 & 6
+Now we try the algorithm and investigate the burn-in and "mixing properties" for the algorithm. We initialise the algorithm with `t_1` to be the mean of `t_0` and `t_2`. Further, we set $\beta = 1$ and $\sigma = 1$ for convenience, additionally, $\lambda_0$ and $\lambda_1$ are drawn from their full conditionals as specified above.
+```{r}
+set.seed(1997)
+# These are global variables because we assume n = 1
+t_0 = coal[1,]
+t_2 = coal[dim(coal)[1], ]
+# Remove the first and last element of the coal data frame
+x = coal[-1, ]
+x = x[-length(x)]
+
+####################################
+# Initialising values
+t_init = (t_0 + t_2)/2
+beta = 1
+lambda_0 = rgamma(1, shape = get_y(x, t = t_init)$y_0 + 2, rate = (t_init - t_0 + 1/beta))
+lambda_1 = rgamma(1, shape = get_y(x, t = t_init)$y_1 + 2, rate = (t_2 - t_init + 1/beta))
+# Number of iterations
+n = 20000
+
+# Now we run the algorithm for different sigmas
+sigma1 = 1
+mcmc_relisation1 = single_site_mcmc(t_init, lambda_0, lambda_1, beta, x, sigma = sigma1, n = n)
+
+sigma2 = 10
+mcmc_relisation2 = single_site_mcmc(t_init, lambda_0, lambda_1, beta, x, sigma = sigma2, n = n)
+
+sigma3 = 30
+mcmc_relisation3 = single_site_mcmc(t_init, lambda_0, lambda_1, beta, x, sigma = sigma3, n = n)
+
+sigma4 = 50
+mcmc_relisation4 = single_site_mcmc(t_init, lambda_0, lambda_1, beta, x, sigma = sigma4, n = n)
+```
+
+Here we have plot the first $1000$ iterations to examin the burn-in.
+```{r, fig.height=6}
+par(mfrow = c(2, 2)) 
+plot(mcmc_relisation1$chain$t_1[1:1000], type = 'l', ylab = 'Year', xlab = "Iterations", main = expression(paste(sigma, ' = 1')))
+plot(mcmc_relisation2$chain$t_1[1:1000], type = 'l', ylab = 'Year', xlab = "Iterations", main = expression(paste(sigma, ' = 10')))
+plot(mcmc_relisation3$chain$t_1[1:1000], type = 'l', ylab = 'Year', xlab = "Iterations", main = expression(paste(sigma, ' = 30')))
+plot(mcmc_relisation4$chain$t_1[1:1000], type = 'l', ylab = 'Year', xlab = "Iterations", main = expression(paste(sigma, ' = 50')))
+```
+The burn-in is faster as $\sigma$ increases, naturally. We see that the burn-in period for $\sigma = 1$ is approximatly $300$, we remain slightly conservative and choose a burn-in of $500$. Furthermore, all simulations appear to converge to the same limiting distribution with mean $\approx 1892$.
+
+```{r}
+# The success rate for the 3 samples
+cat(mcmc_relisation1$success_rate, mcmc_relisation2$success_rate, mcmc_relisation3$success_rate, mcmc_relisation4$success_rate) 
+```
+
+```{r, fig.height=6}
+burnin = 500
+
+par(mfrow = c(2, 2))
+hist(mcmc_relisation1$chain$t_1[burnin:n], col = 'dark green', nclass = 20, main = expression(paste(sigma, ' = 1')), xlab = 'Year')
+hist(mcmc_relisation2$chain$t_1[burnin:n], col = 'dark green', nclass = 20, main = expression(paste(sigma, ' = 10')), xlab = 'Year')
+hist(mcmc_relisation3$chain$t_1[burnin:n], col = 'dark green', nclass = 20, main = expression(paste(sigma, ' = 30')), xlab = 'Year')
+hist(mcmc_relisation4$chain$t_1[burnin:n], col = 'dark green', nclass = 20, main = expression(paste(sigma, ' = 50')), xlab = 'Year')
+```
+
+The histograms support the claim that the limiting distribution of the means are the same for various values of $\sigma$. Though, when $\sigma$ increase, the algorithm explores more of the space, and we see a heavy right tail when $\sigma$ is 30 or 50. (Note that the x-axes vary between the plots.) This is likely to be the result of the algorithm exploring the flatter right part of plot in 1) and gets stuck before retaining to the dominant mean.
+
+
+
+```{r}
+# Here we work with the fsecond realisation
+slope_0 = mean(mcmc_relisation2$chain$lambda_0[burnin:n])
+slope_1 = mean(mcmc_relisation2$chain$lambda_1[burnin:n])
+t_1_mean = mean(mcmc_relisation2$chain$t_1[burnin:n])
+
+# To make the plots
+slope_0_df = data.frame(list('x' = seq(t_0, t_1_mean), 'y' = slope_0*(seq(t_0,t_1_mean)-t_0)))
+slope_1_df = data.frame(list('x' = seq(t_1_mean, t_2), 'y' = slope_1*(seq(t_1_mean,t_2)-t_1_mean) + get_y(x, t_1_mean)$y_0))
+
+# We add lines to the plot from Problem A1
+cumulative_plot + geom_vline(xintercept = t_1_mean) +
+  geom_path(data = slope_0_df, aes(x = x, y = y, col = 'slope = lambda_0')) +
+  geom_path(data = slope_1_df, aes(x = x, y = y, col = 'slope = lambda_1'))
+```
+
+From seeing that the average $t_1$ hits the breakpoint of the cumulative number of disasters quite nicely, we used the mean of $\lambda_0$ as the slope for the orange line and the mean of $\lambda_1$ as the slope for the blue line, in order to illustrate that the algorithm has made a decent job.
+
+## 7
+
+### a)
+
+We investigate a block Metropolis-Hastings algorithm with two block proposals. First we put forth a block proposal for $(t_1, \lambda_0, \lambda_1)$ with the "old" $\beta$. We generate new values $(t_1^{new}, \lambda_0^{new}, \lambda_1^{new})$ by first generating a $t_1^{new}\sim \mathcal{N}(t_1, \sigma_{t_1}^2)$ then we generate $(\lambda_0^{new}, \lambda_1^{new})$ from the joint full conditional using $t_1^{new}$.
+(Below we simplify the notation by substituting $new$ with $'$)
+
+We identify the relevant joint full conditionals. Here the only joint full consitional distribution is the distribution of $(\lambda_0, \lambda_1)$, which is 
+$$
+f(\lambda_0, \lambda_1|x, t_1', \beta) \overset{\textrm{indep.}}{=} f(\lambda_0|x, t_1', \beta) f(\lambda_1|x, t_1', \beta).
+$$
+Following the same argumentation as in 4) we get that
+\begin{align}
+\alpha_1(t_1, \lambda_0, \lambda_1, t_1', \lambda_0', \lambda_1') &= \min\bigg{\{} 1,  \frac{\pi(t_1', \lambda_0', \lambda_1')q(t_1, \lambda_0, \lambda_1| t_1', \lambda_0', \lambda_1')}{\pi(t_1, \lambda_0, \lambda_1)q(t_1', \lambda_0', \lambda_1'| t_1, \lambda_0, \lambda_1)} \bigg{\}}
+\end{align}
+
+Here 
+$$
+\pi(t_1', \lambda_0', \lambda_1') = f(\theta'|x)
+$$ 
+is the limiting distribution of the markov chain (posterior found in 2) and
+
+$$
+q(t_1, \lambda_0, \lambda_1|t_1', \lambda_0', \lambda_1') = f(t_1'|t_1)f(\lambda_0', \lambda_1'|x, t_1', \beta) = f(t_1'|t_1) f(\lambda_0'|x, t_1', \beta) f(\lambda_1'|x, t_1', \beta)
+$$
+
+and again, thanks to the symmetry of $f(t_1'|t_1)$ (we still use the symmetric gaussian distribution for proposing $t_1$) the terms cancel in the numerator and denominator. Then
+
+\begin{align}
+\frac{\pi(t_1', \lambda_0', \lambda_1')q(t_1, \lambda_0, \lambda_1| t_1', \lambda_0', \lambda_1')}{\pi(t_1, \lambda_0, \lambda_1)q(t_1', \lambda_0', \lambda_1'| t_1, \lambda_0, \lambda_1)} = \frac{e^{-2\lambda_0'(t_1' - t_0 + 1/\beta) - 2\lambda_1'(t_2 - t_1' + 1/\beta) - 1/\beta} \lambda_0'^{2y_0'+2}\lambda_1'^{2y_1'+2}\frac{1}{\beta^5}}
+{e^{-2\lambda_0(t_1 - t_0 + 1/\beta) - 2\lambda_1(t_2 - t_1 + 1/\beta) - 1/\beta} \lambda_0^{2y_0+2}\lambda_1^{2y_1+2}\frac{1}{\beta^5}}
+\end{align}
+
+and we end up with
+
+$$
+\alpha_1(t_1, \lambda_0, \lambda_1, t_1', \lambda_0', \lambda_1') = \min\bigg{\{} 1,  \frac{e^{-2\lambda_0'(t_1' - t_0 + 1/\beta) - 2\lambda_1'(t_2 - t_1' + 1/\beta)} \lambda_0'^{2y_0'+2}\lambda_1'^{2y_1'+2}}
+{e^{-2\lambda_0(t_1 - t_0 + 1/\beta) - 2\lambda_1(t_2 - t_1 + 1/\beta)} \lambda_0^{2y_0+2}\lambda_1^{2y_1+2}} \bigg{\}}
+$$
+
+### b)
+The block 2 part of the algorithm consists of proposing a block of $(\beta, \lambda_0, \lambda_1)$ keeping $t_1$ unchanged, using $t_1$ from block 1. We do this by generating a new $\beta$, $\beta^{new}$, from $\mathcal{N}(\beta, \sigma_{\beta}^2)$. Then, using the $\beta^{new}$, we generate new $(\lambda_0, \lambda_1)$ from their joint full consitionals, $f(\lambda_0, \lambda_1 | x, t_1, \beta^{new})$. 
+
+Similarly to above,
+
+$$
+\alpha_2(\beta, \lambda_0, \lambda_1, \beta', \lambda_0', \lambda_1') = \min\bigg{\{} 1,  \frac{\pi(\beta', \lambda_0', \lambda_1')q(\beta, \lambda_0, \lambda_1| \beta', \lambda_0', \lambda_1')}{\pi(\beta, \lambda_0, \lambda_1)q(\beta', \lambda_0', \lambda_1'| \beta, \lambda_0, \lambda_1)} \bigg{\}}
+$$
+where
+$$
+\pi(\beta, \lambda_0, \lambda_1) = f(\theta'|x)
+$$ 
+is the limiting distribution of the Markov Chain, as above.
+
+Moreover,
+$$
+q(\beta, \lambda_0, \lambda_1| \beta', \lambda_0', \lambda_1') = f(\beta'|\beta) f(\lambda_0'|x, t_1, \beta') f(\lambda_1'|x, t_1, \beta')
+$$
+
+where $f(\beta'|\beta) = f(\beta|\beta')$, because we again use the symmetric proposal. Thus we get
+$$
+\alpha_2(\beta, \lambda_0, \lambda_1, \beta', \lambda_0', \lambda_1') = \min\bigg{\{} 1,  \frac{e^{-2\lambda_0'(t_1 - t_0 + 1/\beta') - 2\lambda_1'(t_2 - t_1 + 1/\beta') -1/\beta'} \lambda_0'^{2y_0'+2}\lambda_1'^{2y_1'+2} \frac{1}{\beta'^5}}
+{e^{-2\lambda_0(t_1 - t_0 + 1/\beta) - 2\lambda_1(t_2 - t_1 + 1/\beta)-1/\beta} \lambda_0^{2y_0+2}\lambda_1^{2y_1+2} \frac{1}{\beta^5}} \bigg{\}}
+$$
+
+
+```{r}
+block_mcmc = function(t_1, lambda_0, lambda_1, beta, x, sigma_t, sigma_beta, n = 10000){
+  set.seed(1890)
+  # Initialising a data frame to store the values in
+  mcmc_data = data.frame(matrix(nrow = n, ncol = 4))
+  colnames(mcmc_data) = c("t_1", "lambda_0", "lambda_1", "beta")
+  mcmc_data[1, ] = c(t_1, lambda_0, lambda_1, beta)
+  
+  success_count1 = 0
+  success_count2 = 0
+  for (i in 2:n){
+    ###############################
+    # Block 1
+    t_new = rnorm(1, mean = t_1, sd = sigma_t)
+    # Now we got to find a new t_1, hence
+    while (t_new < t_0 | t_new > t_2){
+      t_new = rnorm(1, mean = t_1, sd = sigma_t)
+    }
+    # We extract the two y-s
+    y_new = get_y(x, t_new)
+    y = get_y(x, t_1)
+    
+    # We get new lambda_0 and lambda_1 using t_new
+    lambda_0_new = rgamma(1, shape = y_new$y_0 + 2, 
+                          rate = (t_new - t_0 + 1/beta))
+    lambda_1_new = rgamma(1, shape = y_new$y_1 + 2, 
+                          rate = (t_2 - t_new + 1/beta))
+    
+    # We now calculate the accpetance probability on log scale
+    # We calculate the numerator on log scale
+    log_numerator = -2*lambda_0_new*(t_new - t_0 + 1/beta) -
+      2*lambda_1_new*(t_2 - t_new + 1/beta) + 
+      2*(y_new$y_0 + 1)*log(lambda_0_new) + 
+      2*(y_new$y_1 + 1)*log(lambda_1_new)
+    # We calculate the denominator on log scale
+    log_denominator = -2*lambda_0*(t_1 - t_0 + 1/beta) -
+      2*lambda_1*(t_2 - t_1 + 1/beta) + 
+      2*(y$y_0 + 1)*log(lambda_0) + 
+      2*(y$y_1 + 1)*log(lambda_1)
+    
+    log_accept = log_numerator - log_denominator
+    
+    # Now we accept or reject
+    u = runif(1)
+    if (u < exp(log_accept)){
+      # If accepted, update the variables
+      t_1 = t_new
+      lambda_0 = lambda_0_new
+      lambda_1 = lambda_1_new
+      # Increase the count of successes for block 1
+      success_count1 = success_count1 + 1
+    }
+    # else{ do nothing }
+    
+    #################################
+    # Block 2
+    # We only use one y as t_1 is fixed in this block 
+    y = get_y(x, t_1)
+    # We propose a new beta < 0
+    beta_new = rnorm(1, mean = beta, sd = sigma_beta)
+    while (beta_new < 0){ 
+      beta_new = rnorm(1, mean = beta, sd = sigma_beta)
+    }
+    
+    lambda_0_new = rgamma(1, shape = y$y_0 + 2, 
+                          rate = (t_1 - t_0 + 1/beta_new))
+    lambda_1_new = rgamma(1, shape = y$y_1 + 2, 
+                          rate = (t_2 - t_1 + 1/beta_new))
+    
+    # Now we calculate the acceptance probability
+    log_numerator2 = -2*lambda_0_new*(t_1 - t_0 + 1/beta_new) -
+      2*lambda_1_new*(t_2 - t_1 + 1/beta_new) - 1/beta_new + 
+      2*(y$y_0 + 1)*log(lambda_0_new) + 
+      2*(y$y_1 + 1)*log(lambda_1_new) - log(beta_new^5)
+    
+    log_denominator2 = -2*lambda_0*(t_1 - t_0 + 1/beta) - 
+      2*lambda_1*(t_2 - t_1 + 1/beta) - 1/beta + 
+      2*(y$y_0 + 1)*log(lambda_0) + 
+      2*(y$y_1 + 1)*log(lambda_1) - log(beta^5)
+    
+    log_accept2 = log_numerator2 - log_denominator2
+    
+    if (runif(1) < exp(log_accept2)){
+      # If accepted, update variables
+      beta = beta_new
+      lambda_0 = lambda_0_new
+      lambda_1 = lambda_1_new
+      # We increase the success count for block 2 
+      success_count2 = success_count2 + 1
+    }
+    # else{ do nothing }
+    
+    # Add the last realisation to the data
+    mcmc_data[i, ] = c(t_1, lambda_0, lambda_1, beta)
+  }
+  # return the data and the success rate 
+  return(list(chain = mcmc_data, success_rate1 = success_count1/n,
+              success_rate2 = success_count2/n))
+}
+```
+
+
+## 8
+We set $\sigma_t$ and $\sigma_{\beta}$ small to illustrate the difference in burn-in.
+```{r}
+# Initialising values
+t_init = (t_0 + t_2)/2
+beta = 1
+
+lambda_0 = rgamma(1, shape = get_y(x, t = t_init)$y_0 + 2, rate = (t_init - t_0 + 1/beta))
+lambda_1 = rgamma(1, shape = get_y(x, t = t_init)$y_1 + 2, rate = (t_2 - t_init + 1/beta))
+```
+
+```{r}
+# We start by testing one realisation
+sigma_t = 1
+sigma_beta = 1
+
+block_realisation1 = block_mcmc(t_init, lambda_0, lambda_1, beta, x,sigma_t = sigma_t, sigma_beta = sigma_beta)
+single_site_mcmc1 = single_site_mcmc(t_init, lambda_0, lambda_1, beta, x,sigma = sigma1)
+```
+
+```{r}
+par(mfrow = c(1, 2)) 
+
+plot(block_realisation1$chain$t_1[1:1000], type = 'l', main = "Block 1", ylab = "Year", xlab = "Iterations")
+plot(single_site_mcmc1$chain$t_1[1:1000], type = 'l', main = "Single site", ylab = "Year", xlab = "Iterations")
+```
+
+
+
+
+
+
+
+
+
+
+
+

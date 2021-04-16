@@ -1,0 +1,9 @@
+base
+rmarkdown
+ggplot2
+dplyr
+bookdown
+gridExtra
+latex2exp
+boot
+invgamma

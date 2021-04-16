@@ -1,0 +1,638 @@
+---
+title: "Previous years users"
+output: html_document
+subtitle: 'Group members: Henrik Syversveen Lie, Mikal Solberg Stapnes'
+---
+
+
+```{r setup, include = FALSE}
+library(formatR)
+library(ggplot2)
+showsol <- FALSE
+library(knitr)
+library(tidyverse)
+library(tibble)
+library(magrittr)
+library(numbers)
+
+opts_chunk$set(tidy.opts = list(width.cutoff = 68), tidy = TRUE, warning = FALSE, error = FALSE, message = FALSE, echo = TRUE, cache = TRUE)
+```
+
+
+# Problem A
+
+```{r, echo = T, eval = T}
+# The function g(x) from problem A.2
+g = function(x, alpha){
+  c = alpha*exp(1)/(alpha+exp(1))
+  result = vector(length = length(x))
+  result[x<1.] = c*x[x<1.]^(alpha-1)
+  result[x>=1.] = c*exp(-x[x>=1.])
+  return(as.double(result))}
+# The following function returns n from the density function g(x)
+# by doing inversion sampling
+G_inv = function(n, alpha){
+  c = alpha*exp(1)/(alpha+exp(1))
+  u = runif(n)
+  result = vector(length = n)
+  result[u < c/alpha] = (alpha/c * u[u < c/alpha])^(1/alpha)
+  result[u >= c/alpha] = -log(1/alpha + exp(-1) - u[u >= c/alpha]/c)
+  return(result)}
+alpha = 0.4300
+n = 100000
+xsamples = G_inv(n, alpha) # Sample from the density function g(x) by inversion sampling
+c = alpha*exp(1)/(alpha+exp(1))
+mean = c/(alpha+1) + 2*c/exp(1)
+cat('Theoretical mean: ', mean, ' Sampled mean: ', mean(xsamples))
+```
+
+Then we compute the theoretical variance by $\text{Var}(X) = \text{E}(X^2)-\text{E}(X)^2$ and compare it with the sampled variance. The theoretical variance will be
+$$\text{Var}(X) = \text{E}(X^2) - \text{E}(X)^2 = \frac{c}{\alpha+2}+\frac{5c}{e} - \big(\frac{c}{\alpha+1} + \frac{2c}{e}\big)^2.$$
+
+We compare results in R
+```{r, echo = T, eval = T}
+variance = c/(alpha+2)+5*c/exp(1) - mean^2
+cat('Theoretical variance: ', variance, ' Sampled variance: ', var(xsamples))
+```
+
+We see that the sampled mean and variance coincide with the theoretical mean and variance. To conclude on the correctness of our algorithm, we also make a histogram of the sample and compare it to the density function $g(x)$.
+
+```{r, echo = T, eval = T, out.width = "50%", fig.align = "center"}
+# Prepare generated samples for plotting by putting them in a dataframe 
+df2 <- data.frame(theo=seq(0,max(xsamples),length.out=n), value=xsamples)
+# Plot the data
+ggplot(df2, aes(x = value)) + geom_histogram(aes(y = ..density.., color='Sampled'), binwidth=0.15) + stat_function(fun=g,geom = "line",size=1., args = (mean=alpha), alpha = 1., aes(color="Analytical")) + ggtitle("g(x), Comparison of analytical and sampled density") + ylim(0,2) + xlim(0,5)+labs(x='x', y='density', caption=paste('Comparison of the analytical density of g(x) (red line) \n and the sampled density (blue bars).'))
+```
+
+
+
+# Problem B: The gamma distribution
+
+## 1.
+
+We can sample from the Gamma distribution with $\alpha \in (0, 1)$ and $\beta = 1$,
+
+$$ f_X(x) = \begin{cases}
+\frac{1}{\Gamma(\alpha)}x^{\alpha-1}e^{-x}, \quad & 0<x,\\
+0, \quad &\text{otherwise}, \\
+\end{cases} $$
+
+using rejection sampling with the distribution $g(x)$ found in A.2 as a proposal distribution. We can do this because $g(x)$ is nonzero at all points where $f_X(x)$ is nonzero. As a result, we can find $c$ s.t. $f_X(x) \leq cg(x)$ for all $x$. 
+
+To generate $n$ samples from $f_X(x)$ we sample from $X \sim g(x)$ and $U \sim u[0, 1]$, and accept the sample $x$ if $u \leq \frac{f_X(x)}{c g(x)}$. We note that the overall acceptance probabiltiy, $P_{\text{accept}}$, is
+$$P_{\text{accept}} = P\bigg(U\leq \frac{1}{c}\frac{f_X(x)}{g(x)}\bigg) = \int_0^{\infty} \frac{f_X(x)}{c g(x)} g(x)dx = c^{-1}.$$
+ 
+To maximize this acceptance probability, we minimize $c$ by choosing
+
+$$ c = \underset{x}{\sup} \frac{f_X(x)}{g(x)} = \underset{x}{\sup} \begin{cases}
+\frac{e^{-x}(\frac{1}{\alpha} + \frac{1}{e})}{\Gamma(\alpha)}, \quad 0 \leq x \le 1 \\
+\frac{x^{\alpha - 1} (\frac{1}{\alpha} + \frac{1}{e})}{\Gamma(\alpha)}, \quad 1 \leq x
+\end{cases},$$
+which gives $c = \frac{(\frac{1}{\alpha} + \frac{1}{e})}{\Gamma(\alpha)}$.
+
+We implement a function in R that generates $n$ samples from $f_X(x)$ by the rejection algorithm.
+```{r, echo = T, eval = T}
+small_gamma = function(alpha, n=1){
+  result = vector()
+  iter = 0
+  sampled = 0
+  c = (1/alpha + exp(-1))/gamma(alpha)
+  
+  while(sampled < n){
+    # Sample n realizations from g(x)
+    x = G_inv(n, alpha)
+    # Compute the acceptance probabilites for the n realizations
+    probs = dgamma(x, alpha, rate=1) / (c * as.double(g(x, alpha)))
+    # Generate n samples from U(0,1)
+    u = runif(n)
+    # Append samples where u < f(x) / c g(x)
+    result = append(result, x[u <= probs])
+    # Increase counters
+    sampled = sampled + sum(u <= probs)
+    iter = iter + n}
+  # If redundant samples were generated, we do not want to count these as iterations
+  iter = iter - length(result) + n
+  # If redundant samples were generated, return only n samples
+  return(list(samples = result[seq(1:n)], iter = iter))}
+```
+
+We compare the sample mean and variance with the theoretical mean and variance and compare the sampled density with the analytical density. 
+
+```{r, echo = T, eval = T}
+alpha = 0.95
+G1 <- small_gamma(alpha, 10000) # Generate samples
+df = data.frame(G1) # Put samples in dataframe to prepare for plotting
+cat('Theoretical mean: ', alpha,' Computed mean: ', mean(G1$samples),'\n')
+cat('Theoretical variance: ', alpha, ' Computed variance: ', var(G1$samples))
+```
+
+We see that the computed mean and variance coincide with the theoretical mean and variance.
+
+```{r, echo = T, eval = T, out.width = "50%", fig.align = "center"}
+ggplot(data=df, aes(x=samples)) + geom_histogram(data=df, aes(x=samples, y=..density.., color="Sampled"), binwidth=0.1) +  stat_function(fun=dgamma, geom = "line",size=1.6, args = list(shape=alpha, rate=1), aes(x=samples, color = "Analytical")) + ggtitle("Gamma pdf - comparison of analytical and sampled density") + ylim(0. ,2.0) + labs(x='x', y='density', caption=paste('Comparison of the analytical density of the Gamma(', alpha, ',1) distribution (red line) \n and the sampled density (blue bars).'))
+```
+
+From the figure we see that we get the correct distribution when using rejection sampling.
+
+## 2.
+
+As we remove the limitation on $\alpha$, we no longer get a closed form expression for the $c$ giving the highest acceptance probability. Instead, we may use the ratio of uniforms method to sample from the Gamma distribution with parameters $\alpha > 1$, $\beta = 1$. We define the area $C_f$,
+
+$$C_f = \bigg \{(x_1, x_2): 0 \leq x_1 \leq \sqrt{f^*(\frac{x_2}{x_1})} \bigg \}, \quad f^*(x) = \begin{cases}
+x^{\alpha-1}e^{-x}, \quad 0 < x, \\
+0, \quad \text{otherwise}.
+\end{cases}$$
+Then we note that $y = x_2 / x_1$ will be Gamma-distributed if sampled uniformly inside $C_f$. By finding 
+
+$$ a = \sqrt{\sup_x f^* (x)}, \quad b_{+} = \sqrt{ \sup_{x\geq 0} x^2 f^* (x)} , \quad b_{\_} = - \sqrt{\sup_{x \leq 0} x^2 f^* (x)},$$
+
+
+\begin{gather*}
+(f^\ast(x))' = 0 \Leftrightarrow x^{\alpha-2}e^{-x}(\alpha - 1  - x) = 0 \Rightarrow x = \alpha - 1 \\
+a = \sqrt{(\alpha - 1)^{\alpha - 1}e^{1-\alpha}},
+\end{gather*}
+
+\begin{gather*}
+(x^2 f^\ast(x))' = 0 \Leftrightarrow x^{\alpha}e^{-x}(\alpha + 1 - x) = 0 \Rightarrow x = \alpha + 1 \\
+b_{+} = \sqrt{(\alpha + 1)^{\alpha + 1}e^{-\alpha - 1}},
+\end{gather*}
+
+$$b_{-} = 0,$$
+
+we can sample uniformly from $[0, a]\times[b_{-}, b_{+}]$ and select the set of samples that are also in $C_f$. Then $y = \frac{x_2}{x_1}$ will be Gamma($\alpha ,1$) distributed. Note that in the code below, we check if $(x_1, x_2) \in C_f$ on a log-scale as $\log a, \log b$ are more easily stored than $a, b$ when $\alpha$ becomes large. The equivalent condition becomes
+$$\log x_1 = \log a + \log u_1, \quad u_1 \sim U[0, 1]$$
+$$\log x_2 = \log b + \log u_2, \quad u_2 \sim U[0, 1]$$
+$$(x_1, x_2) \in C_f \Leftrightarrow 2 \log x_1 \leq (\alpha-1)(\log x_2 - \log x_1) - \exp\{\log x_2 - \log x_1\}.$$
+
+```{r, echo = T, eval = T}
+large_gamma <- function(alpha, n=1){
+  # Log transformations of a and b+
+  loga = 1/2 * (alpha - 1) * (log(alpha - 1) - 1)
+  logb = 1/2 * (alpha + 1) * (log(alpha + 1) - 1)
+  result = vector(mode="numeric")
+  
+  accepted_samples = 0
+  iter = 0
+  while (accepted_samples < n){
+    iter = iter + 1 
+    log_x_1 = loga + log(runif(1))
+    log_x_2 = logb + log(runif(1))
+    # Accept sample if equivalent condition of (x_1, x_2) in C_f is met
+    if (2*log_x_1 <= (alpha - 1)*(log_x_2 - log_x_1) - exp(log_x_2 - log_x_1)){
+      result = append(result, exp(log_x_2 - log_x_1))
+      accepted_samples = accepted_samples + 1}}
+  list(samples = result, iter = iter)}
+```
+
+We then generate samples with our algorithm and conduct tests to check its correctness.
+
+```{r, echo = T, eval = T}
+alpha = 7.
+n = 10000
+G2 = large_gamma(alpha, n) # Generate samples
+cat('Theoretical mean: ', alpha,' Computed mean: ', mean(G2$samples),'\n')
+cat('Theoretical variance: ', alpha, ' Computed variance: ', var(G2$samples))
+```
+
+We see that the computed mean and variance coincide with the theoretical mean and variance.
+
+```{r, echo = T, eval = T, out.width = "50%", fig.align = "center"}
+df = data.frame(data=G2)
+ggplot(df, aes(x=data.samples)) + geom_histogram(data=df, aes(x = data.samples, y=..density.., color="Sampled Function"), binwidth=0.2) + stat_function(fun=dgamma,geom = "line",size=1.6,aes(color='Analytical'),args = list(shape=alpha, rate = 1)) + ggtitle("Gamma pdf - comparison of analytical and sampled density") + labs(x='x', y='density', caption=paste('Comparison of the analytical density of the Gamma(', alpha, ',1) distribution (red line) \n and the sampled density (blue bars).'))
+```
+
+From the figure we see that we get the correct distribution when sampling using the ratio of uniforms method.
+
+We wish to investigate in what manner $\alpha$ affects the acceptance probability $P$ of the ratio of uniforms method. We draw $n = 1000$ samples for $\alpha \in (2, 2002]$ and count, for each $\alpha$, the average number of iterations of the rejection sampling algorithm required to sample one gamma-distributed variable. The inverse of this will then be an estimate of the acceptance probability. 
+```{r, echo = T, eval = T, out.width = "50%", fig.align = "center"}
+# The following function returns number of iterations required to generate 1000 samples from the large_gamma function
+get_gamma_iterations <- function(alpha){return(large_gamma(alpha,1000)$iter)}
+alpha = seq(2,2002,10) # Specify the alphas
+iterations <- sapply(alpha,get_gamma_iterations) # Compute number of iterations for each alpha
+df = data.frame(alpha = seq(2, 2002, 10), P_estimate = 1000/iterations) # Put data in dataframe to prepare for plotting
+ggplot(df, aes(x = alpha, y = P_estimate)) + geom_line() + ggtitle("Sampling from the Gamma - acceptance probability") + labs(caption='Estimated acceptance probability as a function of alpha')
+```
+From the plot we see that $P_accept$ decreases with larger $\alpha$. This is as expected; with increasing $\alpha$, the pdf flattens out and the proportion of the area in $[0, a]\times[b_{-}, b_{+}]$ covered by $C_{f}$ decreases. 
+
+We now have reasonably efficient algorithms for sampling from the Gamma with $\alpha \in (0, 1), \beta = 1$ and $\alpha \in (1, \infty), \beta = 1$. We note that for $\alpha = 1, \beta = 1$, the pdf of the Gamma coincides with the unscaled exponential distribution. We also note that $\beta$ is an inverse scale parameter, and $\frac{1}{\beta}X \sim Gamma(\alpha, \beta)$ if $X \sim Gamma(\alpha, 1)$. We use this and our two algorithms to develop a general algorithm for sampling from the Gamma distribution. 
+
+```{r, echo = T, eval = T, out.width = "50%", fig.align = "center"}
+# As specified above, gamma2 samples using rejection sampling for alpha < 1, and the ratio of uniforms method for alpha > 1. If alpha = 1 we sample from the exponential
+gamma2 = function(alpha, beta = 1, n = 1){
+  if (alpha == 1.0){
+    return(list(samples = exponential(beta, n), iter = n))}
+  else if (alpha <= 1){
+    G = small_gamma(alpha, n)
+    #Insert rate / scale parameters
+    G$samples = G$samples / beta
+    return(G)}
+  else if (alpha > 1){
+    G = large_gamma(alpha, n)
+    #Insert rate / scale parameters
+    G$samples = G$samples / beta
+    return(G)}}
+n = 10000
+alpha = 1000
+beta = 1
+G = gamma2(alpha, beta, n) # Draw samples
+df <- data.frame(G) # Prepare samples for plotting
+histo = hist(G$samples, plot=F) # Compute the sampled density
+#Plot results
+ggplot(df, aes(x = samples)) + geom_histogram(aes(y = ..density.., color='Sampled'), bins=50) + stat_function(fun=dgamma,geom = "line",size=1.6,aes(color='Analytical'),args = list(shape=alpha, rate=beta)) + ggtitle("The Gamma pdf - comparison of analytical and sampled density for extreme alpha") + ylim(0, 1.1*max(histo$density)) + labs(x='x', y='density', caption=paste('Comparison of the analytical density of the Gamma(', alpha, ',1) distribution (red line) \n and the sampled density (blue bars).'))
+```
+We note that as $\alpha \rightarrow \infty$, as in the figure above, the Gamma pdf approaches a normal distribution. Taking advantage of this, sophisticated sampling techniques modify samples from the normal when sampling from the Gamma with very large $\alpha$.
+
+
+<!-- ####################################################################### -->
+<!-- ####################################################################### -->
+<!-- ####################################################################### -->
+<!-- ####################################################################### -->
+
+
+# Problem A: Stochastic simulation by the probability integral transform and bivariate techniques
+
+## 1.
+We will write a function that generates $n$ samples from an exponential distribution with rate $\lambda$. This is performed by first drawing samples from $u\sim U(0,1)$. It then follows that the transformation $x=-\log(u)/\lambda$ follows a exponential distribution with rate $\lambda$.  
+```{r, echo = T, eval = T}
+rexp <- function(n, rate = 1) {
+  u <- runif(n=n) # Draw from standard uniform distribution
+  x <- -log(u) / rate # Transformation to get exponentially distributed variables.
+return(enframe(x)) # Return a vector with the generated random numbers.
+}
+```
+In order to check correctness of the algorithm we compare sample mean and variance with the theoretical solution. We already know that $\mathrm{E}(X)=1/\lambda$ and $\mathrm{Var}(X)=1/\lambda^2$ when $X\sim \mathrm{Exp}(\lambda)$. We draw $n=50000$ samples with $\lambda=2.0$ and compare with theoretical solutions.
+```{r, echo = T, eval = T}
+n = 50000
+rate = 2.0
+x = rexp(n, rate)
+results <- list(mean=1/rate,
+sample_mean = mean(x$value),
+variance = 1/rate^2,
+sample_variance = var(x$value))
+print(results)
+```
+The algortihm seems to be correct as sampled mean and variance are very close to the theoretical. Further, we compare histogram of random sample to analytical solution.
+```{r, echo = T, eval = T, fig.width=7, fig.height=6, fig.cap='__Figure 1__: Comparison of sampled and analytical exponential distribution. Sampled density shown in blue bars and analytical in red line. Sample mean is green vertical line.'}
+ggplot() +
+geom_histogram(
+data = x,
+mapping = aes(x=value, y=..density.., color='Sampled'),
+binwidth = 0.01,
+boundary = 0
+) +
+geom_vline(
+aes(xintercept = mean(x$value), color='Sample mean')
+) +
+stat_function(
+fun = dexp,
+args=list(rate = rate),
+aes(col='Analytical')
+)+
+ggtitle('Comparison sampled and analytical exponential distribution')+
+labs(x='x', y='density')
+```
+From __figure 1__ we see that there is overlap between density of samples and analytical solution. Hence, our algorithm seems to be correct. 
+
+## 2.
+## (a)
+Consider the probability density function
+\begin{align}
+g(x) = 
+\begin{cases}
+cx^{\alpha-1},\,\, &0<x<1,\\
+ce^{-x},\,\, &1\leq x,\\
+0, \,\, &\text{otherwise}
+\end{cases}
+\end{align}
+where $c$ is normalizing constant and $\alpha\in (0,1)$.
+We find the normalizing constant by integration
+\begin{align}
+1=\int_{0}^{\infty}g(x)\,dx=\int_{0}^1 cx^{\alpha-1}\,dx+\int_{1}^{\infty}ce^{-x}\,dx=c\frac{\alpha+e}{\alpha e}
+\end{align}
+Hence the normalizing constant equals $c=\frac{e\alpha}{e+\alpha}$. 
+
+It then follows that the density function is given by
+\begin{align}
+g(x) = 
+\begin{cases}
+\frac{e\alpha}{e+\alpha}x^{\alpha-1},\,\, &0<x<1,\\
+\frac{e\alpha}{e+\alpha}e^{-x},\,\, &1\leq x,\\
+0, \,\, &\text{otherwise}
+\end{cases}
+\end{align}
+
+
+The cumulative distribution is then given by
+\begin{align}
+F(x)=\mathrm{P}(X\leq x) = \int_{0}^x g(z)\,dz=
+\begin{cases}
+0, \,\, &x \leq 0,\\
+\frac{e\alpha}{e+\alpha}\frac{x^{\alpha}}{\alpha} = \frac{e}{e+\alpha}x^{\alpha},\,\, &0<x<1,\\
+\frac{\frac{e\alpha}{e+\alpha}}{e}+\frac{\frac{e\alpha}{e+\alpha}}{\alpha}-\frac{e\alpha}{e+\alpha}e^{-x} = 1-\frac{e\alpha}{e+\alpha}e^{-x},\,\, &1\leq x,
+\end{cases}
+\end{align}
+
+In order to find the inverse of $F(x)$ we first look at the case when $F(x)<\frac{e}{e+\alpha}$
+\begin{align}
+F(x)=\frac{e}{e+\alpha} \implies x=\left(\frac{\alpha+e}{e}F(x)\right)^{1/\alpha}
+\end{align}
+For $F(x)>\frac{e}{e+\alpha}$
+\begin{align}
+F(x)=1-\frac{\alpha e}{\alpha+e}e^{-x}\implies x=-\ln\left(\frac{\alpha+e}{\alpha e}(1-F(x))\right)
+\end{align}
+
+Hence, the inverse of the cumulative distribution $F(x)$ becomes
+\begin{align}
+F^{-1}(x)= 
+\begin{cases}
+\left(\frac{\alpha+e}{e}x\right)^{1/\alpha},\,\, &0\leq x \leq \frac{e}{e+\alpha}\\
+-\ln\left(\frac{\alpha+e}{\alpha e}(1-x)\right), \,\, &\frac{e}{e+\alpha}\leq x \leq 1
+\end{cases}
+\end{align}
+
+Now we can use $F^{-1}(x)$ to sample from the target distribution $g(x)$ using the inversion method. First we generate a random variable $U$ from the standard uniform distribution in the interval $[0,1]$ and then it follows that $X=F^{-1}(U)$ is a random variable from the target distribution $g(x)$.
+
+The mean is found by
+\begin{align}
+\mathrm{E}(X)=\int_{-\infty}^{\infty}xg(x)\,dx=\frac{c}{1+\alpha}+\frac{2c}{e}
+\end{align}
+The variance is then found by $\mathrm{Var}(X)=\mathrm{E}(X^2)-\mathrm{X}^2$. 
+We have that 
+\begin{align}
+\mathrm{E}(X^2)=\int_{0}^{\infty}x^2 g(x)\,dx=c\int_{0}^1 x^{\alpha+1}\,dx+c\int_{1}^{\infty}x^2e^{-x}\,dx=\frac{c}{2+\alpha}+\frac{5c}{e}
+\end{align}
+and thus
+\begin{align}
+\mathrm{Var}(X)=\frac{c}{2+\alpha}+\frac{5c}{e}-\left(\frac{c}{1+\alpha}+\frac{2c}{e}\right)
+\end{align}
+
+## (b)
+Since we have an analytical formula for the cumulative distribution we can use the inversion method to sample from $g(x)$.
+```{r, echo = T, eval = T}
+rg = function(n, alpha){
+    u = runif(n = n)
+    boundary = exp(1) / (alpha + exp(1))
+    left_boundary = u < boundary
+    right_boundary = !left_boundary
+    
+    u[left_boundary] = (u[left_boundary] / boundary) ** (1 / alpha)
+    u[right_boundary] = -log((1-u[right_boundary]) / (boundary * alpha))
+    return(enframe(u))
+}
+```
+For comparison we also implement the density function $g(x)$
+```{r, echo = T, eval = T}
+dg = function(x, alpha = 1) {
+    c = alpha * exp(1) / (alpha + exp(1))
+    d <- rep(0, length(x))
+    left_indices <- 0 < x & x < 1
+    right_indices <- 1 <= x
+    d[left_indices] <- c * (x[left_indices] ** (alpha - 1))
+    d[right_indices] <- c * exp(-x[right_indices])
+    return(d)
+}
+```
+We now compare the inversion method with 100000 random samples to the theoretical density.
+```{r, echo = T, eval = T, fig.cap='__Figure 2__: Comparing analytical and sampled density. Sampled density shown in blue bars and analytical of g(x) in red line. Sample mean is green vertical line.', fig.height=6, fig.width=7}
+samples <- 100000
+alpha <- 0.7
+g_samples <- rg(n = samples, alpha = alpha)
+ggplot() +
+    geom_histogram(
+        data = g_samples,
+        mapping = aes(x=value, y=..density.., color='Sampled'),
+        binwidth = 0.01,
+        boundary = 0
+    ) + stat_function(
+        fun = dg,
+        args = list(alpha = alpha),
+        aes(col = 'Analytical')
+    ) +
+    geom_vline(
+        aes(
+            xintercept = mean(g_samples$value),
+            col = 'Sample mean'
+        )
+    ) +
+    ylim(0, 1) +
+    xlim(0, 5)+
+ggtitle('Comparison sampled and analytical density of g(x)')+
+labs(x='x', y='density')
+```
+From __figure 2__ we see that the analytical density overlaps with the sampled density and algorithm seems to work. We know compare sampled mean and variance with theoretical mean and variance. 
+
+```{r, echo = T, eval = T}
+library(magrittr)
+c <- alpha*exp(1)/(alpha + exp(1))
+mean <- c*(1/(alpha + 1) + 2/exp(1))
+second_moment <- c*(1/(alpha+2) + 5/exp(1))
+variance <- second_moment - mean^2
+results <- list(
+    mean=mean,
+    sample_mean = mean(g_samples %>% use_series(value)),
+    variance = variance,
+    sample_variance = var(g_samples %>% use_series(value)))
+print(results)
+```
+We also see that sampled and theoretical values coincide and conclude that the algorithm works. 
+
+## 3.
+Consider the probability density function
+
+\begin{align}
+f(x)=\frac{ce^{\alpha x}}{(1+e^{\alpha x})^2}, \quad -\infty < x < \infty, \, \alpha > 0 
+\end{align}
+
+where $c$ is a normalizing constant. 
+
+## (a)
+We find the normalizing constant by integration
+
+\begin{align}
+1=\int_{\mathcal{R}}f(x)\,dx=\int_{-\infty}^{\infty}\frac{ce^{\alpha x}}{(1+e^{\alpha x})^2}\,dx=
+c\int_{1}^{\infty}\frac{e^{\alpha x}}{u^2}\frac{du}{\alpha e^{\alpha x}}=
+\frac{c}{\alpha}\int_{1}^{\infty}\frac{1}{u^2}\,du
+=-\frac{c}{\alpha}\frac{1}{u}\Big|_{1}^{\infty}=\frac{c}{\alpha} \implies c=\alpha
+\end{align}
+
+where we have used the substitution $u = 1+e^{\alpha x}$ and thus $du=\alpha e^{\alpha x}\,dx$.
+
+Inserting $c$ into the density function yields
+
+\begin{align}
+f(x)=\frac{\alpha e^{\alpha x}}{(1+e^{\alpha x})^2}, \quad -\infty < x < \infty, \, \alpha > 0 
+\end{align}
+
+## (b)
+The cumulative distribution can now be found 
+\begin{align}
+F(x)=P(X\leq x)=\int_{-\infty}^{x}f(z)\,dz=\int_{-\infty}^{x}\frac{\alpha e^{\alpha z}}{(1+e^{\alpha z})^2}\,dz=1-\frac{1}{1+e^{\alpha x}},\quad -\infty < x < \infty,\, \alpha >0
+\end{align}
+Hence the inverse of the cumulative distribution $F(x)$ becomes 
+\begin{align}
+F^{-1}(x)=\frac{1}{\alpha}\ln\left(\frac{-x}{x-1}\right)
+\end{align}
+Now we can use $F^{-1}(x)$ to sample from the target distribution $f(x)$ using the inversion method. First we generate a random variable $U$ from the standard uniform distribution in the interval $[0,1]$ and then it follows that $X=F^{-1}(U)$ is a random variable from the target distribution $f(x)$.
+The mean is found by
+\begin{align}
+\mathrm{E}(X)=\int_{-\infty}^{\infty}xf(x)\,dx=\int_{-\infty}^{\infty}x\frac{\alpha e^{\alpha x}}{(1+e^{\alpha x})^2}\,dx=0
+\end{align}
+as $f(x)$ is even, $f(-x)=f(x)$, and $x$ is odd function. 
+The variance is then found by $\mathrm{Var}(X)=\mathrm{E}(X^2)-\mathrm{E}(X)^2$. 
+We have that 
+\begin{align}
+\mathrm{E}(X^2)=\int_{-\infty}^{\infty}x^2 f(x)\,dx=\int_{-\infty}^{\infty}x^2\frac{\alpha e^{\alpha x}}{(1+e^{\alpha x})^2}\,dx=2\int_{0}^{\infty}x^2\frac{\alpha e^{\alpha x}}{(1+e^{\alpha x})^2}\,dx
+\end{align}
+and thus
+
+
+## (c)
+Since we have an analytical formula for the cumulative distribution we can use the inversion method to sample from f(x).
+```{r, echo = T, eval = T}
+rf = function(n, alpha){
+    u = runif(n = n)
+    x = log(-u/(u-1))/alpha
+    return(enframe(x))
+}
+```
+
+For comparison we also implement the density function $f(x)$
+
+```{r, echo = T, eval = T}
+df = function(x, alpha){
+    c = alpha
+    d = rep(0, length(x))
+    d = c*exp(alpha*x)/((1+exp(alpha*x))**2)
+}
+```
+We now compare the inversion method with 10000000 random samples to the theoretical density. We set $\alpha=0.7$.
+```{r, echo = T, eval = T, fig.height=6, fig.width=7, fig.cap='__Figure 3__: Comparing analytical and sampled density. Sampled density shown in blue bars and analytical of f(x) in red line. Sample mean is green vertical line.'}
+samples <- 10000000
+alpha <- 0.7
+f_samples <- rf(n = samples, alpha = alpha)
+ggplot() +
+    geom_histogram(
+        data = f_samples,
+        mapping = aes(x=value, y=..density.., color='Sampled'),
+        binwidth = 0.01,
+        boundary = 0
+    ) + stat_function(
+        fun = df,
+        args = list(alpha = alpha),
+        aes(col = 'Analytical')
+    ) +
+    geom_vline(
+        aes(
+            xintercept = mean(f_samples$value),
+            col = 'Sample mean'
+        )
+    ) +
+    ylim(0, 0.22) +
+    xlim(-12, 12)+ ggtitle("Comparison sampled and analytical density of f(x)") + 
+    labs(x = "x", y = "density")
+```
+From __figure 3__ we see that the analytical density overlaps with the sampled density and the algorithm works. We know compare sampled mean and variance with theoretical mean and variance.
+```{r, echo = T, eval = T}
+mean <- 0
+second_moment <- c*(1/(alpha+2) + 5/exp(1))
+variance <- second_moment - mean^2
+results <- list(
+    mean=mean,
+    sample_mean = mean(f_samples %>% use_series(value)),
+    variance = variance,
+    sample_variance = var(f_samples %>% use_series(value)))
+print(results)
+```
+We also see that sampled and theoretical values coincide and conclude that the algorithm works.
+
+## 4.
+To sample from standard normal distribution we use the Box-Muller transformation. That is, given $x_1\sim U(0,1)$ and $x_2\sim \mathrm{Exp}(1/2)$ it follows that $y_1=\sqrt{x_2}\cos(2\pi x_1)$ and $y_2=\sqrt{x_2}\sin(2\pi x_1)$ are iid standard normal. Hence, $(y_1,y_2)\sim\mathcal{N}_2(\vec{0},\mathbf{I})$ is standard bivariate normal distributed and independent. When sampling $n$ numbers from the standard normal distrubution,
+the Box-Muller algorith is called $n/2$ times.
+```{r, echo = T, eval = T}
+box_muller = function(n){
+    x1 <- runif(n %/% 2 + 1)
+    x2 <- rexp(n %/% 2 + 1, rate = 1/2) %>% use_series(value)
+    y1 <- map2_dbl(x2, x1, ~sqrt(.x)*cos(.y * 2 * pi))
+    y2 <- map2_dbl(x2, x1, ~sqrt(.x)*sin(.y * 2 * pi))
+    return(c(y1, y2)[1:n]) # Return only n first random numbers.
+}
+```
+Then we test for sample mean and variance against theoretical solution with $n=1000000$.
+```{r, echo = T, eval = T}
+dnorm_std = partial(dnorm, mean = 0, sd = 1)
+n = 1000000
+x = box_muller(n)
+sample <- tibble(value = x)
+results <- list(mean = 0,
+    sample_mean = mean(x),
+    variance = 1,
+    sample_variance = var(x))
+results
+```
+We observe that sampled mean and variance coincide well with theoretical values, and thus it is evident that the Box-Muller algorithm is correctly implemented. In addition we make a histogram of the samples and compare to analytical solution. 
+```{r, echo = T, eval = T, fig.width=7, fig.height=6, fig.cap='__Figure 4__: Comparing analytical and sampled density. Sampled density shown in blue bars and analytical of standard normal distribution in red line. Sample mean is green vertical line.'}
+ggplot() +
+    geom_histogram(data=sample,aes(x=value, y=..density.., color='Sampled'), binwidth=0.05) +
+    stat_function(fun=dnorm_std, aes(color="Analytical"), size=1)+geom_vline(aes(xintercept = mean(x), col = "Sample mean"))+  ggtitle("Comparison sampled and analytical density of standard normal distribution") + 
+    labs(x = "x", y = "density")
+```
+From __figure 4__ we observe that sampled and theoretical density coincide. Now we make a QQ-plot of generated samples and test for normality with the Anderson-Darling normality test. 
+```{r, echo = T, eval = T, fig.cap='__Figure 5__: Normal QQ-plot to check for normality of data.'}
+qqnorm(x, pch = 1, frame = FALSE)
+qqline(x, col = "steelblue", lwd = 2)
+library(nortest)
+ad.test(x)
+```
+The QQ-plot in __figure 5__ and the Anderson-Darling test (p-value larger than 0.05 means that we do not reject null hypothesis of normality) indicate normality of data and thus our algorithm works. 
+
+## 5.
+We now want to sample from a general $d$-variate normal distribution $\mathcal{N}_d(\mu,\Sigma)$. The simplest method is to generate $d$ iid standard normal samples and then apply the transformation
+
+\begin{align}
+y = \mu + A x \sim \mathcal{N}(\mu,AA^T)
+\end{align}
+
+where $\Sigma=AA^T$ and $x$ is the vector of iid standard normal samples generated by __box_muller__ algorithm above. $A$ is found by Cholesky decomposition or SVD. 
+```{r, echo = T, eval = T}
+# Function to draw one sample of a d-variate Normal(mu, sigma) variable
+multivariate_normal <- function(mean, covariance){
+    d <- length(mean)
+    A <- chol(covariance)
+    x <- box_muller(d)
+    y <- A %*% x + mean
+    return(y)
+}
+```
+Testing the implementation for $d=2$, $\mu=[1,4]^T$ and 
+\begin{align}
+\Sigma=
+\begin{pmatrix}
+9.5 & 2.0\\
+2.0 & 1.0
+\end{pmatrix}
+\end{align}
+we get
+
+```{r, echo = T, eval = T}
+library(purrr)
+mean = c(1,4)
+d = length(mean)
+covariance = matrix(c(9.5, 2, 2, 1), ncol = d, nrow = d) 
+n = 1e+04
+sample = matrix(NA, ncol = d, nrow = n) 
+for (i in 1:n) {
+  sample[i, ] <- multivariate_normal(mean, covariance) # Draw n samples
+}
+sample_mean = apply(sample, 2, mean)
+sample_covariance = cov(sample)
+
+results <- list(mean=mean,
+sample_mean=as.numeric(sample_mean),
+covariance=covariance,
+sample_covariance=as.matrix(sample_covariance))
+colnames(results$sample_covariance) <- NULL
+rownames(results$sample_covariance) <- NULL
+print(results)
+```
+The empirical mean and covariance
+matrix is shown to agree with the specified theoretical mean and covariance matrix.
